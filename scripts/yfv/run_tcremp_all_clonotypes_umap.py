@@ -39,6 +39,28 @@ def parse_args() -> argparse.Namespace:
         help="Glob pattern used inside --raw-dir to select per-donor clonotype tables.",
     )
     parser.add_argument(
+        "--recursive",
+        action="store_true",
+        help="Search for input files recursively under --raw-dir.",
+    )
+    parser.add_argument(
+        "--path-must-contain",
+        nargs="*",
+        default=(),
+        help="Optional substrings that must all be present in the matched file path.",
+    )
+    parser.add_argument(
+        "--donors",
+        nargs="*",
+        default=DONOR_ORDER,
+        help="Donor IDs to include.",
+    )
+    parser.add_argument(
+        "--allow-multiple-files-per-donor",
+        action="store_true",
+        help="Allow multiple matched input files per donor after filtering.",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path("results/yfv_ms5_ek8_lr1/article/tcremp_all_clonotypes"),
@@ -112,9 +134,69 @@ def extract_donor_id(path: Path) -> str:
     return parts[1]
 
 
-def load_combined_input(raw_dir: Path, input_pattern: str) -> pd.DataFrame:
+def discover_input_paths(
+    raw_dir: Path,
+    input_pattern: str,
+    recursive: bool,
+    path_must_contain: tuple[str, ...] | list[str],
+    donors: tuple[str, ...] | list[str],
+    allow_multiple_files_per_donor: bool,
+) -> list[Path]:
+    candidates = sorted(raw_dir.rglob(input_pattern) if recursive else raw_dir.glob(input_pattern))
+    allowed_donors = set(donors)
+    required_substrings = tuple(path_must_contain)
+
+    filtered: list[Path] = []
+    donor_to_paths: dict[str, list[Path]] = {}
+
+    for path in candidates:
+        donor_id = extract_donor_id(path)
+        if donor_id not in allowed_donors:
+            continue
+        path_str = str(path).replace("\\", "/")
+        if any(substr not in path_str for substr in required_substrings):
+            continue
+        filtered.append(path)
+        donor_to_paths.setdefault(donor_id, []).append(path)
+
+    if not filtered:
+        details = f"pattern={input_pattern!r}, recursive={recursive}, required_substrings={required_substrings!r}"
+        raise FileNotFoundError(f"No files matched under {raw_dir} with {details}")
+
+    missing_donors = [donor for donor in donors if donor not in donor_to_paths]
+    if missing_donors:
+        raise FileNotFoundError(f"No matched files found for donor(s): {', '.join(missing_donors)}")
+
+    if not allow_multiple_files_per_donor:
+        duplicate_donors = {donor: paths for donor, paths in donor_to_paths.items() if len(paths) > 1}
+        if duplicate_donors:
+            lines = ["Multiple files matched for the same donor; refine --path-must-contain or --input-pattern:"]
+            for donor, paths in sorted(duplicate_donors.items()):
+                lines.append(f"{donor}:")
+                lines.extend(f"  {path}" for path in paths)
+            raise ValueError("\n".join(lines))
+
+    return filtered
+
+
+def load_combined_input(
+    raw_dir: Path,
+    input_pattern: str,
+    recursive: bool,
+    path_must_contain: tuple[str, ...] | list[str],
+    donors: tuple[str, ...] | list[str],
+    allow_multiple_files_per_donor: bool,
+) -> pd.DataFrame:
     rows: list[pd.DataFrame] = []
-    for path in sorted(raw_dir.glob(input_pattern)):
+    input_paths = discover_input_paths(
+        raw_dir=raw_dir,
+        input_pattern=input_pattern,
+        recursive=recursive,
+        path_must_contain=path_must_contain,
+        donors=donors,
+        allow_multiple_files_per_donor=allow_multiple_files_per_donor,
+    )
+    for path in input_paths:
         donor_id = extract_donor_id(path)
         df = pd.read_csv(path, sep="\t", usecols=["clone_id", "cdr3aa_beta", "v_beta", "j_beta"])
         df = df.rename(
@@ -127,10 +209,8 @@ def load_combined_input(raw_dir: Path, input_pattern: str) -> pd.DataFrame:
         df["clone_id"] = donor_id + "__" + df["clone_id"].astype(str)
         df["donor_id"] = donor_id
         df["locus"] = "beta"
+        df["source_path"] = str(path)
         rows.append(df)
-
-    if not rows:
-        raise FileNotFoundError(f"No files matching {input_pattern!r} found in {raw_dir}")
 
     combined = pd.concat(rows, ignore_index=True)
     combined = combined.dropna(subset=["clone_id", "junction_aa", "v_call", "j_call", "locus"]).copy()
@@ -423,7 +503,14 @@ def main() -> None:
     output_dir = args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    combined_input = load_combined_input(args.raw_dir, args.input_pattern)
+    combined_input = load_combined_input(
+        raw_dir=args.raw_dir,
+        input_pattern=args.input_pattern,
+        recursive=args.recursive,
+        path_must_contain=args.path_must_contain,
+        donors=args.donors,
+        allow_multiple_files_per_donor=args.allow_multiple_files_per_donor,
+    )
     combined_input_path = output_dir / f"{args.prefix}_input.tsv"
     combined_input.to_csv(combined_input_path, sep="\t", index=False)
 
