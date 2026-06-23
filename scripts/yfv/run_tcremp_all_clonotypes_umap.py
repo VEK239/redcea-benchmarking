@@ -222,10 +222,6 @@ def load_combined_input(
 
 
 def run_tcremp(args: argparse.Namespace, input_path: Path, output_dir: Path) -> None:
-    import shutil
-    import time
-
-    import mir.embedding.prototype_embedding as prototype_embedding
     from tcremp.tcremp_run import main as tcremp_main
 
     mplconfigdir = Path(tempfile.gettempdir()) / "mplconfig-redcea-icml-2026"
@@ -263,26 +259,10 @@ def run_tcremp(args: argparse.Namespace, input_path: Path, output_dir: Path) -> 
     ]
 
     original_argv = sys.argv[:]
-    original_rmtree = prototype_embedding.shutil.rmtree
-
-    def forgiving_rmtree(path: str | Path, *rmtree_args, **rmtree_kwargs) -> None:
-        last_error: Exception | None = None
-        for _ in range(8):
-            try:
-                shutil.rmtree(path, *rmtree_args, **rmtree_kwargs)
-                return
-            except PermissionError as exc:
-                last_error = exc
-                time.sleep(1.0)
-        if last_error is not None:
-            print(f"Warning: could not fully remove temporary TCRemP directory {path}: {last_error}", file=sys.stderr)
-
-    prototype_embedding.shutil.rmtree = forgiving_rmtree
     try:
         sys.argv = cli_args
         tcremp_main()
     finally:
-        prototype_embedding.shutil.rmtree = original_rmtree
         sys.argv = original_argv
 
 
