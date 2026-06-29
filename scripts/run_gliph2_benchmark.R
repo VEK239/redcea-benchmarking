@@ -20,7 +20,7 @@ epitope <- unique(input_df$antigen.epitope)[1]
 
 search_assignment_table <- function(obj) {
   cdr3_candidates <- c("CDR3b", "cdr3aa", "cdr3", "cdr3_beta_aa")
-  cluster_candidates <- c("cluster", "cluster_id", "clusterID", "group", "group_id", "convergence_group", "Cluster")
+  cluster_candidates <- c("cluster", "cluster_id", "clusterID", "group", "group_id", "convergence_group", "Cluster", "tag")
 
   if (is.data.frame(obj)) {
     cn <- colnames(obj)
@@ -46,8 +46,12 @@ search_assignment_table <- function(obj) {
 }
 
 search_output_files <- function(root_dir) {
+  preferred <- file.path(root_dir, "cluster_member_details.txt")
   files <- list.files(root_dir, recursive = TRUE, full.names = TRUE)
   files <- files[grepl("\\.(txt|tsv|csv)$", files, ignore.case = TRUE)]
+  if (preferred %in% files) {
+    files <- c(preferred, setdiff(files, preferred))
+  }
 
   for (path in files) {
     sep <- if (grepl("\\.csv$", path, ignore.case = TRUE)) "," else "\t"
