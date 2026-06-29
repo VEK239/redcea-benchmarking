@@ -43,6 +43,8 @@ python -m pip install \
   tcrdist3 \
   "git+https://github.com/antigenomics/redcea"
 
+conda install -y -n "$ENV_NAME" -c svalkiers -c bioconda -c pytorch -c conda-forge clustcr
+
 if [[ ! -d "$TOOLS_DIR/GIANA" ]]; then
   git clone https://github.com/s175573/GIANA.git "$TOOLS_DIR/GIANA"
 fi
@@ -61,12 +63,14 @@ Activate environment:
 
 Installed:
   redcea                  -> Python package
+  clustcr                 -> Conda package
   tcrdist3                -> Python package
   GIANA                   -> $TOOLS_DIR/GIANA
   TCRNet / VDJtools       -> $TOOLS_DIR/vdjtools-1.2.1/vdjtools-1.2.1.jar
 
 Examples:
   python -c "import redcea; print('redcea ok')"
+  python -c "import clustcr; print('clustcr ok')"
   python -c "import tcrdist; print('tcrdist3 ok')"
   python "$TOOLS_DIR/GIANA/GIANA4.1.py" -h
   java -jar "$TOOLS_DIR/vdjtools-1.2.1/vdjtools-1.2.1.jar" CalcDegreeStats -h

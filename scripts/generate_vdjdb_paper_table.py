@@ -8,7 +8,7 @@ import pandas as pd
 
 
 EPITOPE_ORDER = ["GLC", "YLQ"]
-METHOD_ORDER = ["GIANA", "TCRdist3", "TCRnet", "RedCEA", "RedCEA+VJ"]
+METHOD_ORDER = ["GIANA", "TCRdist3", "ClusTCR", "TCRnet", "RedCEA", "RedCEA+VJ"]
 
 
 def find_repo_root() -> Path:
@@ -25,7 +25,7 @@ def build_table(benchmark_detailed: Path, redcea_tuned_detailed: Path) -> pd.Dat
 
     baseline = (
         bench[
-            bench["method"].isin(["giana", "tcrdist3", "tcrnet"])
+            bench["method"].isin(["giana", "tcrdist3", "clustcr", "tcrnet"])
             & bench["match_mode"].eq("cdr3")
         ][["method", "epitope_short", "precision", "recall", "f1"]]
         .copy()
@@ -34,6 +34,7 @@ def build_table(benchmark_detailed: Path, redcea_tuned_detailed: Path) -> pd.Dat
         {
             "giana": "GIANA",
             "tcrdist3": "TCRdist3",
+            "clustcr": "ClusTCR",
             "tcrnet": "TCRnet",
         }
     )

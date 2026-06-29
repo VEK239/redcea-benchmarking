@@ -362,6 +362,67 @@ def convert_tcrnet(args: argparse.Namespace) -> None:
     print(f"Saved {args.output}")
 
 
+def run_clustcr(args: argparse.Namespace) -> None:
+    import networkx as nx
+    from scipy import sparse
+    from clustcr import Clustering
+
+    if hasattr(nx, "to_scipy_sparse_array"):
+        original_to_sparse_array = nx.to_scipy_sparse_array
+
+        def to_sparse_matrix_compat(*call_args, **call_kwargs):
+            return sparse.csr_matrix(original_to_sparse_array(*call_args, **call_kwargs))
+
+        nx.to_scipy_sparse_array = to_sparse_matrix_compat
+
+    input_df = pd.read_csv(args.input, sep="\t").copy()
+    input_df = input_df.dropna(subset=["cdr3aa"]).copy()
+    input_df["cdr3aa"] = input_df["cdr3aa"].astype(str).str.strip()
+    input_df = input_df[input_df["cdr3aa"].ne("")].reset_index(drop=True)
+
+    if input_df.empty:
+        save_cluster_members(input_df, {}, args.output, dataset_name=args.dataset_name, method="clustcr")
+        print(f"Saved {args.output}")
+        return
+
+    clustering = Clustering(chain="B", method=args.method, n_cpus=args.n_cpus)
+    result = clustering.fit(input_df["cdr3aa"])
+    clusters = result.clusters_df.copy()
+    if "junction_aa" not in clusters.columns or "cluster" not in clusters.columns:
+        raise ValueError(f"Unexpected clustcr output columns: {sorted(clusters.columns)}")
+
+    clusters["junction_aa"] = clusters["junction_aa"].astype(str).str.strip()
+    clusters["cluster"] = clusters["cluster"].astype(str).str.strip()
+    assigned = clusters[clusters["cluster"].ne("")].copy()
+
+    seq_cluster_counts = assigned.groupby("junction_aa")["cluster"].nunique()
+    ambiguous = seq_cluster_counts[seq_cluster_counts > 1]
+    if not ambiguous.empty:
+        raise ValueError(
+            "clustcr assigned the same CDR3 sequence to multiple clusters: "
+            + ", ".join(ambiguous.index[:5])
+        )
+
+    counts = assigned["cluster"].value_counts()
+    keep = set(counts[counts >= args.min_cluster_size].index)
+    seq_to_cluster = (
+        assigned.loc[assigned["cluster"].isin(keep), ["junction_aa", "cluster"]]
+        .drop_duplicates(subset=["junction_aa"])
+        .set_index("junction_aa")["cluster"]
+        .to_dict()
+    )
+
+    cluster_map: dict[int, str] = {}
+    for idx, cdr3aa in input_df["cdr3aa"].items():
+        cluster_id = seq_to_cluster.get(cdr3aa)
+        if cluster_id is None:
+            continue
+        cluster_map[idx] = f"H.B.{cluster_id}"
+
+    save_cluster_members(input_df, cluster_map, args.output, dataset_name=args.dataset_name, method="clustcr")
+    print(f"Saved {args.output}")
+
+
 def compute_metrics(y_true: pd.Series, y_pred: pd.Series) -> dict[str, float | int]:
     y_true = y_true.astype(bool)
     y_pred = y_pred.astype(bool)
@@ -502,6 +563,19 @@ def parse_args() -> argparse.Namespace:
     tcrnet_parser.add_argument("--min-degree", type=int, default=2)
     tcrnet_parser.add_argument("--pvalue-threshold", type=float, default=0.05)
 
+    clustcr_parser = subparsers.add_parser("run-clustcr")
+    clustcr_parser.add_argument("--input", type=Path, required=True)
+    clustcr_parser.add_argument("--output", type=Path, required=True)
+    clustcr_parser.add_argument("--dataset-name", default=ALL_DATASET_NAME)
+    clustcr_parser.add_argument(
+        "--method",
+        default="MCL",
+        choices=["MCL", "FAISS", "TWO-STEP", "RANDOM", "mcl", "faiss", "two-step", "random"],
+        help="clustcr clustering backend. MCL is the recommended baseline for datasets smaller than 50k sequences.",
+    )
+    clustcr_parser.add_argument("--n-cpus", default=1)
+    clustcr_parser.add_argument("--min-cluster-size", type=int, default=3)
+
     eval_parser = subparsers.add_parser("evaluate")
     eval_parser.add_argument("--truth", type=Path, required=True)
     eval_parser.add_argument("--results-root", type=Path, required=True)
@@ -520,6 +594,8 @@ def main() -> None:
         convert_giana(args)
     elif args.command == "convert-tcrnet":
         convert_tcrnet(args)
+    elif args.command == "run-clustcr":
+        run_clustcr(args)
     elif args.command == "evaluate":
         evaluate(args)
     else:

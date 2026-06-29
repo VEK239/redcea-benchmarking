@@ -20,6 +20,9 @@ TCRDIST3_MIN_CLUSTER_SIZE="${TCRDIST3_MIN_CLUSTER_SIZE:-3}"
 TCRDIST3_CPUS="${TCRDIST3_CPUS:-4}"
 TCRDIST3_CHUNK_SIZE="${TCRDIST3_CHUNK_SIZE:-100}"
 GIANA_MIN_CLUSTER_SIZE="${GIANA_MIN_CLUSTER_SIZE:-3}"
+CLUSTCR_METHOD="${CLUSTCR_METHOD:-MCL}"
+CLUSTCR_CPUS="${CLUSTCR_CPUS:-1}"
+CLUSTCR_MIN_CLUSTER_SIZE="${CLUSTCR_MIN_CLUSTER_SIZE:-3}"
 DATASET_NAME="${DATASET_NAME:-ALL}"
 
 require_cmd() {
@@ -42,12 +45,15 @@ require_cmd git
 
 require_path "$VDJDB_SLIM"
 require_path "$TRUTH_CSV"
-require_path "$GIANA_HOME"
 
 if [[ " $METHODS " == *" tcrnet "* ]]; then
   echo "Error: tcrnet was removed from this benchmark workflow." >&2
   echo "Use the vdjdb-motifs workflow for TCRNet runs instead." >&2
   exit 1
+fi
+
+if [[ " $METHODS " == *" giana "* ]]; then
+  require_path "$GIANA_HOME"
 fi
 
 # shellcheck disable=SC1091
@@ -84,6 +90,17 @@ if [[ " $METHODS " == *" giana "* ]]; then
     --output "$RESULTS_DIR/giana/cluster_members_TRB.txt" \
     --dataset-name "$DATASET_NAME" \
     --min-cluster-size "$GIANA_MIN_CLUSTER_SIZE"
+fi
+
+if [[ " $METHODS " == *" clustcr "* ]]; then
+  mkdir -p "$RESULTS_DIR/clustcr"
+  python scripts/benchmark_vdjdb_methods.py run-clustcr \
+    --input "$WORK_DIR/inputs/generic/${DATASET_NAME}.tsv" \
+    --output "$RESULTS_DIR/clustcr/cluster_members_TRB.txt" \
+    --dataset-name "$DATASET_NAME" \
+    --method "$CLUSTCR_METHOD" \
+    --n-cpus "$CLUSTCR_CPUS" \
+    --min-cluster-size "$CLUSTCR_MIN_CLUSTER_SIZE"
 fi
 
 python scripts/benchmark_vdjdb_methods.py evaluate \
