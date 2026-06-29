@@ -8,7 +8,7 @@ import pandas as pd
 
 
 EPITOPE_ORDER = ["GLC", "YLQ"]
-METHOD_ORDER = ["GIANA", "TCRdist3", "TCRnet", "RedCEA", "RedCEA+VJ"]
+METHOD_ORDER = ["1mm Hamming baseline", "GIANA", "GLIPH2", "clusTCR", "TCRdist3", "TCRnet", "RedCEA", "RedCEA+VJ"]
 
 
 def find_repo_root() -> Path:
@@ -19,25 +19,14 @@ def find_repo_root() -> Path:
     raise FileNotFoundError("Could not locate repository root from current working directory.")
 
 
-def build_table(benchmark_detailed: Path, redcea_tuned_detailed: Path) -> pd.DataFrame:
-    bench = pd.read_csv(benchmark_detailed)
+def build_redcea_rows(bench: pd.DataFrame, redcea_tuned_detailed: Path) -> pd.DataFrame:
+    bench_redcea = bench[bench["method"].eq("redcea")].copy()
+    if not bench_redcea.empty:
+        bench_redcea = bench_redcea[bench_redcea["match_mode"].isin(["cdr3", "cdr3+vj"])].copy()
+        bench_redcea["Method"] = bench_redcea["match_mode"].map({"cdr3": "RedCEA", "cdr3+vj": "RedCEA+VJ"})
+        return bench_redcea[["Method", "epitope_short", "precision", "recall", "f1"]].copy()
+
     red = pd.read_csv(redcea_tuned_detailed)
-
-    baseline = (
-        bench[
-            bench["method"].isin(["giana", "tcrdist3", "tcrnet"])
-            & bench["match_mode"].eq("cdr3")
-        ][["method", "epitope_short", "precision", "recall", "f1"]]
-        .copy()
-    )
-    baseline["Method"] = baseline["method"].map(
-        {
-            "giana": "GIANA",
-            "tcrdist3": "TCRdist3",
-            "tcrnet": "TCRnet",
-        }
-    )
-
     tuned_rows = []
     for epitope in EPITOPE_ORDER:
         for with_vj, label in [(False, "RedCEA"), (True, "RedCEA+VJ")]:
@@ -55,7 +44,30 @@ def build_table(benchmark_detailed: Path, redcea_tuned_detailed: Path) -> pd.Dat
                     "f1": row["f1"],
                 }
             )
-    tuned = pd.DataFrame(tuned_rows)
+    return pd.DataFrame(tuned_rows)
+
+
+def build_table(benchmark_detailed: Path, redcea_tuned_detailed: Path) -> pd.DataFrame:
+    bench = pd.read_csv(benchmark_detailed)
+
+    baseline = (
+        bench[
+            bench["method"].isin(["hamming1", "giana", "gliph2", "clustcr", "tcrdist3", "tcrnet"])
+            & bench["match_mode"].eq("cdr3")
+        ][["method", "epitope_short", "precision", "recall", "f1"]]
+        .copy()
+    )
+    baseline["Method"] = baseline["method"].map(
+        {
+            "hamming1": "1mm Hamming baseline",
+            "giana": "GIANA",
+            "gliph2": "GLIPH2",
+            "clustcr": "clusTCR",
+            "tcrdist3": "TCRdist3",
+            "tcrnet": "TCRnet",
+        }
+    )
+    tuned = build_redcea_rows(bench, redcea_tuned_detailed)
 
     out = pd.concat(
         [

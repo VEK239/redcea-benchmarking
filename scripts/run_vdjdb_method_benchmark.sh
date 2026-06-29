@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 ENV_NAME="${1:-redcea-benchmark}"
-METHODS="${METHODS:-tcrdist3 giana}"
+METHODS="${METHODS:-tcrdist3 giana hamming1}"
 
 VDJDB_SLIM="${VDJDB_SLIM:-$PWD/data/vdjdb/vdjdb.slim.txt}"
 TRUTH_CSV="${TRUTH_CSV:-$PWD/data/private/01_05_2025_TCRvdb.csv}"
@@ -19,6 +19,8 @@ TCRDIST3_RADIUS="${TCRDIST3_RADIUS:-24}"
 TCRDIST3_MIN_CLUSTER_SIZE="${TCRDIST3_MIN_CLUSTER_SIZE:-3}"
 TCRDIST3_CPUS="${TCRDIST3_CPUS:-4}"
 TCRDIST3_CHUNK_SIZE="${TCRDIST3_CHUNK_SIZE:-100}"
+HAMMING1_MAX_DISTANCE="${HAMMING1_MAX_DISTANCE:-1}"
+HAMMING1_MIN_CLUSTER_SIZE="${HAMMING1_MIN_CLUSTER_SIZE:-2}"
 GIANA_MIN_CLUSTER_SIZE="${GIANA_MIN_CLUSTER_SIZE:-3}"
 DATASET_NAME="${DATASET_NAME:-ALL}"
 
@@ -42,12 +44,15 @@ require_cmd git
 
 require_path "$VDJDB_SLIM"
 require_path "$TRUTH_CSV"
-require_path "$GIANA_HOME"
 
 if [[ " $METHODS " == *" tcrnet "* ]]; then
   echo "Error: tcrnet was removed from this benchmark workflow." >&2
   echo "Use the vdjdb-motifs workflow for TCRNet runs instead." >&2
   exit 1
+fi
+
+if [[ " $METHODS " == *" giana "* ]]; then
+  require_path "$GIANA_HOME"
 fi
 
 # shellcheck disable=SC1091
@@ -71,6 +76,16 @@ if [[ " $METHODS " == *" tcrdist3 "* ]]; then
     --cpus "$TCRDIST3_CPUS" \
     --chunk-size "$TCRDIST3_CHUNK_SIZE" \
     --min-cluster-size "$TCRDIST3_MIN_CLUSTER_SIZE"
+fi
+
+if [[ " $METHODS " == *" hamming1 "* ]]; then
+  mkdir -p "$RESULTS_DIR/hamming1"
+  python scripts/benchmark_vdjdb_methods.py run-hamming1 \
+    --input "$WORK_DIR/inputs/generic/${DATASET_NAME}.tsv" \
+    --output "$RESULTS_DIR/hamming1/cluster_members_TRB.txt" \
+    --dataset-name "$DATASET_NAME" \
+    --max-distance "$HAMMING1_MAX_DISTANCE" \
+    --min-cluster-size "$HAMMING1_MIN_CLUSTER_SIZE"
 fi
 
 if [[ " $METHODS " == *" giana "* ]]; then

@@ -193,6 +193,58 @@ def connected_components(n_nodes: int, edges: list[tuple[int, int]]) -> list[lis
     return comps
 
 
+def run_hamming1(args: argparse.Namespace) -> None:
+    input_df = pd.read_csv(args.input, sep="\t").copy()
+    input_df = input_df.dropna(subset=["cdr3aa"]).copy()
+    input_df["cdr3aa"] = input_df["cdr3aa"].astype(str).str.strip()
+    input_df = input_df[input_df["cdr3aa"].ne("")].reset_index(drop=True)
+
+    seqs = input_df["cdr3aa"].tolist()
+    if args.max_distance != 1:
+        raise ValueError("run-hamming1 currently supports only --max-distance 1")
+
+    edge_set: set[tuple[int, int]] = set()
+    exact_buckets: dict[tuple[int, str], list[int]] = defaultdict(list)
+    pattern_buckets: dict[tuple[int, str], list[int]] = defaultdict(list)
+
+    for idx, seq in enumerate(seqs):
+        exact_buckets[(len(seq), seq)].append(idx)
+        for pos in range(len(seq)):
+            pattern = seq[:pos] + "*" + seq[pos + 1 :]
+            pattern_buckets[(len(seq), pattern)].append(idx)
+
+    for bucket in exact_buckets.values():
+        if len(bucket) < 2:
+            continue
+        for i in range(len(bucket)):
+            for j in range(i + 1, len(bucket)):
+                edge_set.add((bucket[i], bucket[j]))
+
+    for bucket in pattern_buckets.values():
+        if len(bucket) < 2:
+            continue
+        for i in range(len(bucket)):
+            for j in range(i + 1, len(bucket)):
+                left = bucket[i]
+                right = bucket[j]
+                if left == right:
+                    continue
+                edge_set.add((min(left, right), max(left, right)))
+
+    cluster_map: dict[int, str] = {}
+    cid_counter = 1
+    for comp in connected_components(len(input_df), sorted(edge_set)):
+        if len(comp) < args.min_cluster_size:
+            continue
+        cid = f"H.B.{cid_counter}"
+        cid_counter += 1
+        for idx in comp:
+            cluster_map[idx] = cid
+
+    save_cluster_members(input_df, cluster_map, args.output, dataset_name=args.dataset_name, method="hamming1")
+    print(f"Saved {args.output}")
+
+
 def save_cluster_members(
     input_df: pd.DataFrame,
     cluster_map: dict[int, str],
@@ -486,6 +538,13 @@ def parse_args() -> argparse.Namespace:
     tcrdist_parser.add_argument("--cpus", type=int, default=1)
     tcrdist_parser.add_argument("--chunk-size", type=int, default=100)
 
+    hamming_parser = subparsers.add_parser("run-hamming1")
+    hamming_parser.add_argument("--input", type=Path, required=True)
+    hamming_parser.add_argument("--output", type=Path, required=True)
+    hamming_parser.add_argument("--dataset-name", default=ALL_DATASET_NAME)
+    hamming_parser.add_argument("--max-distance", type=int, default=1)
+    hamming_parser.add_argument("--min-cluster-size", type=int, default=2)
+
     giana_parser = subparsers.add_parser("convert-giana")
     giana_parser.add_argument("--input", type=Path, required=True)
     giana_parser.add_argument("--giana-output", type=Path, required=True)
@@ -516,6 +575,8 @@ def main() -> None:
         prepare_inputs(args)
     elif args.command == "run-tcrdist3":
         run_tcrdist3(args)
+    elif args.command == "run-hamming1":
+        run_hamming1(args)
     elif args.command == "convert-giana":
         convert_giana(args)
     elif args.command == "convert-tcrnet":
