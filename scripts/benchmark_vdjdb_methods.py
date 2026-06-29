@@ -3,11 +3,9 @@ from __future__ import annotations
 
 import argparse
 import csv
-import math
-import subprocess
 from collections import defaultdict
-from pathlib import Path
 from io import StringIO
+from pathlib import Path
 
 import pandas as pd
 
@@ -18,6 +16,7 @@ EPITOPES = [
 ]
 PADJ_THRESHOLD = 1e-5
 ALL_DATASET_NAME = "ALL"
+EPITOPE_TO_SHORT = {epitope: short_name for epitope, short_name in EPITOPES}
 
 
 def normalize_segment(series: pd.Series, *, drop_allele: bool = True) -> pd.Series:
@@ -78,6 +77,15 @@ def write_giana_input(df: pd.DataFrame, output_path: Path) -> None:
     with output_path.open("w", newline="") as handle:
         writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
         writer.writerows(rows)
+
+
+def write_dataset_inputs(df: pd.DataFrame, input_root: Path, dataset_name: str) -> None:
+    generic_path = input_root / "generic" / f"{dataset_name}.tsv"
+    giana_path = input_root / "giana" / f"{dataset_name}.tsv"
+
+    generic_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(generic_path, sep="\t", index=False)
+    write_giana_input(df, giana_path)
 
 
 def load_giana_output(path: Path) -> pd.DataFrame:
@@ -151,12 +159,9 @@ def prepare_inputs(args: argparse.Namespace) -> None:
     input_root.mkdir(parents=True, exist_ok=True)
     truth.to_csv(args.work_dir / "truth_glc_ylq.csv", index=False)
 
-    generic_path = input_root / "generic" / f"{ALL_DATASET_NAME}.tsv"
-    giana_path = input_root / "giana" / f"{ALL_DATASET_NAME}.tsv"
-
-    generic_path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(generic_path, sep="\t", index=False)
-    write_giana_input(df, giana_path)
+    write_dataset_inputs(df, input_root, ALL_DATASET_NAME)
+    for epitope, short_name in EPITOPES:
+        write_dataset_inputs(df[df["antigen.epitope"].eq(epitope)].copy(), input_root, short_name)
 
     print(f"Prepared inputs in {input_root}")
     print(f"Saved truth table to {args.work_dir / 'truth_glc_ylq.csv'}")
@@ -219,6 +224,25 @@ def save_cluster_members(
         )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(rows, columns=columns).to_csv(output_path, sep="\t", index=False)
+
+
+def merge_cluster_members(args: argparse.Namespace) -> None:
+    frames: list[pd.DataFrame] = []
+    expected_columns = ["gene", "cdr3aa", "v.segm", "j.segm", "cid", "antigen.epitope", "method", "dataset_name"]
+
+    for path in args.inputs:
+        if not path.exists():
+            continue
+        frame = pd.read_csv(path, sep="\t").copy()
+        for column in expected_columns:
+            if column not in frame.columns:
+                frame[column] = ""
+        frames.append(frame[expected_columns])
+
+    merged = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=expected_columns)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    merged.to_csv(args.output, sep="\t", index=False)
+    print(f"Saved {args.output}")
 
 
 def run_tcrdist3(args: argparse.Namespace) -> None:
@@ -321,6 +345,43 @@ def convert_giana(args: argparse.Namespace) -> None:
         cluster_map[idx] = f"H.B.{cluster_id}"
 
     save_cluster_members(input_df, cluster_map, args.output, dataset_name=args.dataset_name, method="GIANA")
+    print(f"Saved {args.output}")
+
+
+def normalize_gliph2_assignments(raw: pd.DataFrame) -> pd.DataFrame:
+    rename_map = {}
+    if "cluster" in raw.columns:
+        rename_map["cluster"] = "cid"
+    elif "cid" not in raw.columns:
+        raise ValueError("GLIPH2 output must contain either 'cluster' or 'cid' column.")
+
+    for source, target in [("cdr3", "cdr3aa"), ("CDR3b", "cdr3aa")]:
+        if source in raw.columns and "cdr3aa" not in raw.columns:
+            rename_map[source] = "cdr3aa"
+    normalized = raw.rename(columns=rename_map).copy()
+
+    required = ["cdr3aa", "cid", "antigen.epitope"]
+    missing = [column for column in required if column not in normalized.columns]
+    if missing:
+        raise ValueError(f"GLIPH2 output is missing required columns: {', '.join(missing)}")
+
+    normalized["cdr3aa"] = normalized["cdr3aa"].astype(str).str.strip()
+    normalized["cid"] = normalized["cid"].astype(str).str.strip()
+    normalized["antigen.epitope"] = normalized["antigen.epitope"].astype(str).str.strip()
+    if "method" not in normalized.columns:
+        normalized["method"] = "GLIPH2"
+    if "dataset_name" not in normalized.columns:
+        normalized["dataset_name"] = normalized["antigen.epitope"].map(EPITOPE_TO_SHORT).fillna("")
+    return normalized
+
+
+def convert_gliph2(args: argparse.Namespace) -> None:
+    raw = pd.read_csv(args.gliph2_output, sep="\t").copy()
+    normalized = normalize_gliph2_assignments(raw)
+    if args.dataset_name:
+        normalized["dataset_name"] = args.dataset_name
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    normalized.to_csv(args.output, sep="\t", index=False)
     print(f"Saved {args.output}")
 
 
@@ -486,12 +547,24 @@ def parse_args() -> argparse.Namespace:
     tcrdist_parser.add_argument("--cpus", type=int, default=1)
     tcrdist_parser.add_argument("--chunk-size", type=int, default=100)
 
+    hamming_parser = subparsers.add_parser("run-hamming1")
+    hamming_parser.add_argument("--input", type=Path, required=True)
+    hamming_parser.add_argument("--output", type=Path, required=True)
+    hamming_parser.add_argument("--dataset-name", default=ALL_DATASET_NAME)
+    hamming_parser.add_argument("--max-distance", type=int, default=1)
+    hamming_parser.add_argument("--min-cluster-size", type=int, default=2)
+
     giana_parser = subparsers.add_parser("convert-giana")
     giana_parser.add_argument("--input", type=Path, required=True)
     giana_parser.add_argument("--giana-output", type=Path, required=True)
     giana_parser.add_argument("--output", type=Path, required=True)
     giana_parser.add_argument("--dataset-name", default=ALL_DATASET_NAME)
     giana_parser.add_argument("--min-cluster-size", type=int, default=3)
+
+    gliph2_parser = subparsers.add_parser("convert-gliph2")
+    gliph2_parser.add_argument("--gliph2-output", type=Path, required=True)
+    gliph2_parser.add_argument("--output", type=Path, required=True)
+    gliph2_parser.add_argument("--dataset-name", default="")
 
     tcrnet_parser = subparsers.add_parser("convert-tcrnet")
     tcrnet_parser.add_argument("--input", type=Path, required=True)
@@ -507,6 +580,10 @@ def parse_args() -> argparse.Namespace:
     eval_parser.add_argument("--results-root", type=Path, required=True)
     eval_parser.add_argument("--output", type=Path, required=True)
 
+    merge_parser = subparsers.add_parser("merge-cluster-members")
+    merge_parser.add_argument("--inputs", type=Path, nargs="+", required=True)
+    merge_parser.add_argument("--output", type=Path, required=True)
+
     return parser.parse_args()
 
 
@@ -516,12 +593,18 @@ def main() -> None:
         prepare_inputs(args)
     elif args.command == "run-tcrdist3":
         run_tcrdist3(args)
+    elif args.command == "run-hamming1":
+        run_hamming1(args)
     elif args.command == "convert-giana":
         convert_giana(args)
+    elif args.command == "convert-gliph2":
+        convert_gliph2(args)
     elif args.command == "convert-tcrnet":
         convert_tcrnet(args)
     elif args.command == "evaluate":
         evaluate(args)
+    elif args.command == "merge-cluster-members":
+        merge_cluster_members(args)
     else:
         raise ValueError(f"Unsupported command: {args.command}")
 

@@ -106,5 +106,7 @@ out <- unique(merged[, .(
   cid,
   antigen.epitope
 )])
+out[, method := "GLIPH2"]
+out[, dataset_name := short_name]
 
 fwrite(out, output_path, sep = "\t")

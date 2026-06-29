@@ -16,6 +16,7 @@ require_cmd conda
 require_cmd git
 require_cmd curl
 require_cmd unzip
+require_cmd Rscript
 
 # shellcheck disable=SC1091
 source "$(conda info --base)/etc/profile.d/conda.sh"
@@ -52,6 +53,8 @@ if [[ ! -f "$TOOLS_DIR/vdjtools-1.2.1/vdjtools-1.2.1.jar" ]]; then
   unzip -o "$TOOLS_DIR/vdjtools-1.2.1.zip" -d "$TOOLS_DIR" >/dev/null
 fi
 
+Rscript -e "if (!requireNamespace('turboGliph', quietly = TRUE)) install.packages('turboGliph', repos='https://cloud.r-project.org')"
+
 cat <<EOF
 
 Done.
@@ -63,11 +66,13 @@ Installed:
   redcea                  -> Python package
   tcrdist3                -> Python package
   GIANA                   -> $TOOLS_DIR/GIANA
+  GLIPH2 / turboGliph     -> R package turboGliph
   TCRNet / VDJtools       -> $TOOLS_DIR/vdjtools-1.2.1/vdjtools-1.2.1.jar
 
 Examples:
   python -c "import redcea; print('redcea ok')"
   python -c "import tcrdist; print('tcrdist3 ok')"
   python "$TOOLS_DIR/GIANA/GIANA4.1.py" -h
+  Rscript -e "library(turboGliph); cat('turboGliph ok\n')"
   java -jar "$TOOLS_DIR/vdjtools-1.2.1/vdjtools-1.2.1.jar" CalcDegreeStats -h
 EOF
